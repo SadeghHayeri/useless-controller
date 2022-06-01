@@ -18,6 +18,13 @@ package controllers
 
 import (
 	"context"
+	"github.com/go-logr/logr"
+	v1 "k8s.io/api/apps/v1"
+	corev1 "k8s.io/api/core/v1"
+	v12 "k8s.io/api/networking/v1"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/util/intstr"
+	controllers "sotoon.ir/application/utils"
 
 	"k8s.io/apimachinery/pkg/runtime"
 	ctrl "sigs.k8s.io/controller-runtime"
@@ -27,29 +34,217 @@ import (
 	applicationv1alpha1 "sotoon.ir/application/api/v1alpha1"
 )
 
+var HttpPortName = "http"
+
 // ApplicationReconciler reconciles a Application object
 type ApplicationReconciler struct {
 	client.Client
 	Scheme *runtime.Scheme
 }
 
+var DefaultControllerLabels = map[string]string{
+	"controller": "application-controller",
+}
+
+func (r *ApplicationReconciler) getResourceLabels(name string) map[string]string {
+	return controllers.MergeMaps(
+		DefaultControllerLabels,
+		map[string]string{
+			"controller": "applicationController",
+			"app":        name,
+		},
+	)
+}
+
+func (r *ApplicationReconciler) getContainerAndServicePorts() (*[]corev1.ContainerPort, *[]corev1.ServicePort) {
+	containerPorts := []corev1.ContainerPort{
+		{
+			Name:          HttpPortName,
+			ContainerPort: 3000,
+			Protocol:      corev1.ProtocolTCP,
+		},
+	}
+
+	servicePort := []corev1.ServicePort{
+		{
+			Name:       HttpPortName,
+			Port:       3000,
+			TargetPort: intstr.IntOrString{Type: intstr.String, StrVal: HttpPortName},
+			Protocol:   corev1.ProtocolTCP,
+		},
+	}
+
+	return &containerPorts, &servicePort
+}
+
+func (r *ApplicationReconciler) GetIngress(name string, targetService *corev1.Service, domainSpecs []applicationv1alpha1.ApplicationDomainSpec) *v12.Ingress {
+	labels := r.getResourceLabels(name)
+
+	var rules []v12.IngressRule
+	var tls []v12.IngressTLS
+	for _, domainSpec := range domainSpecs {
+		rules = append(rules, v12.IngressRule{
+			Host: domainSpec.Host,
+			IngressRuleValue: v12.IngressRuleValue{
+				HTTP: &v12.HTTPIngressRuleValue{
+					Paths: []v12.HTTPIngressPath{
+						{
+							Path: domainSpec.Path,
+							Backend: v12.IngressBackend{
+								Service: &v12.IngressServiceBackend{
+									Name: targetService.Name,
+									Port: v12.ServiceBackendPort{
+										Name: targetService.Spec.Ports[0].Name, //TODO: Refactor
+									},
+								},
+							},
+						},
+					},
+				},
+			},
+		})
+		tls = append(tls, v12.IngressTLS{
+			Hosts:      []string{domainSpec.Host},
+			SecretName: domainSpec.Host, // SecretName same as hostname
+		})
+	}
+
+	return &v12.Ingress{
+		ObjectMeta: metav1.ObjectMeta{
+			Labels: labels,
+			Annotations: map[string]string{
+				"cert-manager.io/cluster-issuer": "letsencrypt",
+				"kubernetes.io/ingress.class":    "nginx",
+			},
+		},
+		Spec: v12.IngressSpec{
+			IngressClassName: &name,
+			Rules:            rules,
+			TLS:              tls,
+		},
+	}
+}
+
+func (r *ApplicationReconciler) GetClusterIPService(name string, selector map[string]string, containerPort *corev1.ContainerPort) *corev1.Service {
+	labels := r.getResourceLabels(name)
+
+	return &corev1.Service{
+		ObjectMeta: metav1.ObjectMeta{
+			Labels: labels,
+		},
+		Spec: corev1.ServiceSpec{
+			Selector: selector,
+			Ports: []corev1.ServicePort{
+				{
+					Name:       HttpPortName,
+					Port:       containerPort.ContainerPort, // Service port same as container
+					TargetPort: intstr.IntOrString{Type: intstr.String, StrVal: HttpPortName},
+					Protocol:   corev1.ProtocolTCP,
+				},
+			},
+		},
+	}
+}
+
+func (r *ApplicationReconciler) GetDeployment(name string, image string, replicas int32, httpPort int32) *v1.Deployment {
+	labels := r.getResourceLabels(name)
+
+	return &v1.Deployment{
+		Spec: v1.DeploymentSpec{
+			Replicas: &replicas,
+			Selector: &metav1.LabelSelector{
+				MatchLabels: labels,
+			},
+			Template: corev1.PodTemplateSpec{
+				ObjectMeta: metav1.ObjectMeta{
+					Labels: labels,
+				},
+				Spec: corev1.PodSpec{
+					Containers: []corev1.Container{
+						{
+							Name:  "app",
+							Image: image,
+							Ports: []corev1.ContainerPort{
+								{
+									Name:          HttpPortName,
+									ContainerPort: httpPort,
+									Protocol:      corev1.ProtocolTCP,
+								},
+							},
+						},
+					},
+				},
+			},
+		},
+	}
+}
+
+func (r *ApplicationReconciler) ReconcileDeployment(deployment *v1.Deployment, logger *logr.Logger, ctx context.Context, req ctrl.Request) error {
+	var currentDeployment v1.Deployment
+	if err := r.Get(ctx, req.NamespacedName, &currentDeployment); err != nil {
+		logger.Info("Creating Deployment", "Deployment.Namespace", deployment.Namespace, "Deployment.Name", deployment.Name)
+		if err := r.Create(ctx, deployment); err != nil {
+			logger.Error(err, "Failed to create Deployment", "Deployment.Namespace", deployment.Namespace, "Deployment.Name", deployment.Name)
+			return err
+		}
+	}
+	return nil
+}
+
+func (r *ApplicationReconciler) ReconcileService(service *corev1.Service, logger *logr.Logger, ctx context.Context, req ctrl.Request) error {
+	var currentService corev1.Service
+	if err := r.Get(ctx, req.NamespacedName, &currentService); err != nil {
+		logger.Info("Creating Service", "Service.Namespace", service.Namespace, "Service.Name", service.Name)
+		if err := r.Create(ctx, service); err != nil {
+			logger.Error(err, "Failed to create Service", "Service.Namespace", service.Namespace, "Service.Name", service.Name)
+			return err
+		}
+	}
+	return nil
+}
+
+func (r *ApplicationReconciler) ReconcileIngress(ingress *v12.Ingress, logger *logr.Logger, ctx context.Context, req ctrl.Request) error {
+	var currentIngress v12.Ingress
+	if err := r.Get(ctx, req.NamespacedName, &currentIngress); err != nil {
+		logger.Info("Creating Ingress", "Ingress.Namespace", ingress.Namespace, "Ingress.Name", ingress.Name)
+		if err := r.Create(ctx, ingress); err != nil {
+			logger.Error(err, "Failed to create Ingress", "Ingress.Namespace", ingress.Namespace, "Ingress.Name", ingress.Name)
+			return err
+		}
+	}
+	return nil
+}
+
 //+kubebuilder:rbac:groups=application.sotoon.ir,resources=applications,verbs=get;list;watch;create;update;patch;delete
 //+kubebuilder:rbac:groups=application.sotoon.ir,resources=applications/status,verbs=get;update;patch
 //+kubebuilder:rbac:groups=application.sotoon.ir,resources=applications/finalizers,verbs=update
-
-// Reconcile is part of the main kubernetes reconciliation loop which aims to
-// move the current state of the cluster closer to the desired state.
-// TODO(user): Modify the Reconcile function to compare the state specified by
-// the Application object against the actual cluster state, and then
-// perform operations to make the cluster state reflect the state specified by
-// the user.
-//
-// For more details, check Reconcile and its Result here:
-// - https://pkg.go.dev/sigs.k8s.io/controller-runtime@v0.11.2/pkg/reconcile
 func (r *ApplicationReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
-	_ = log.FromContext(ctx)
+	logger := log.FromContext(ctx)
 
-	// TODO(user): your logic here
+	var application applicationv1alpha1.Application
+	if err := r.Get(ctx, req.NamespacedName, &application); err != nil {
+		logger.Error(err, "Unable to fetch application")
+		return ctrl.Result{}, client.IgnoreNotFound(err)
+	}
+
+	deployment := r.GetDeployment(application.Name, application.Spec.Image, application.Spec.Replicas, application.Spec.HttpPort)
+	err := r.ReconcileDeployment(deployment, &logger, ctx, req)
+	if err != nil {
+		return ctrl.Result{}, err
+	}
+
+	mainContainerPort := &deployment.Spec.Template.Spec.Containers[0].Ports[0]
+	service := r.GetClusterIPService(application.Name, deployment.Spec.Template.Labels, mainContainerPort)
+	err = r.ReconcileService(service, &logger, ctx, req)
+	if err != nil {
+		return ctrl.Result{}, err
+	}
+
+	ingress := r.GetIngress(application.Name, service, application.Spec.Domains)
+	err = r.ReconcileIngress(ingress, &logger, ctx, req)
+	if err != nil {
+		return ctrl.Result{}, err
+	}
 
 	return ctrl.Result{}, nil
 }

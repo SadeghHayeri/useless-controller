@@ -28,15 +28,16 @@ type ApplicationDomainSSLSpec struct {
 }
 
 type ApplicationDomainSpec struct {
-	Domain string                   `json:"domain"`
-	Path   string                   `json:"path"`
-	SSL    ApplicationDomainSSLSpec `json:"ssl"`
+	Host string                   `json:"host"`
+	Path string                   `json:"path"`
+	SSL  ApplicationDomainSSLSpec `json:"ssl"`
 }
 
 // ApplicationSpec defines the desired state of Application
 type ApplicationSpec struct {
-	Replicas int                     `json:"replicas"`
+	Replicas int32                   `json:"replicas"`
 	Image    string                  `json:"image"`
+	HttpPort int32                   `json:"httpPort"`
 	Domains  []ApplicationDomainSpec `json:"domains"`
 }
 
