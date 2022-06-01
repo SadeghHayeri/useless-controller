@@ -3,4 +3,14 @@ layout:
 - go.kubebuilder.io/v3
 projectName: application
 repo: sotoon.ir/application
+resources:
+- api:
+    crdVersion: v1
+    namespaced: true
+  controller: true
+  domain: sotoon.ir
+  group: application
+  kind: Application
+  path: sotoon.ir/application/api/v1alpha1
+  version: v1alpha1
 version: "3"
