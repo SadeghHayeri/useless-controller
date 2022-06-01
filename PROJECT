@@ -1,0 +1,6 @@
+domain: sotoon.ir
+layout:
+- go.kubebuilder.io/v3
+projectName: application
+repo: sotoon.ir/application
+version: "3"
