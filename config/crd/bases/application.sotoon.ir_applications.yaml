@@ -15,10 +15,23 @@ spec:
     singular: application
   scope: Namespaced
   versions:
-  - name: v1alpha1
+  - additionalPrinterColumns:
+    - jsonPath: .spec.replicas
+      name: Replicas
+      type: integer
+    - jsonPath: .spec.image
+      name: Image
+      type: string
+    - jsonPath: .spec.httpPort
+      name: Port
+      priority: 1
+      type: integer
+    - jsonPath: .status.endpoints
+      name: Endpoints
+      type: string
+    name: v1alpha1
     schema:
       openAPIV3Schema:
-        description: Application is the Schema for the applications API
         properties:
           apiVersion:
             description: 'APIVersion defines the versioned schema of this representation
@@ -55,12 +68,17 @@ spec:
                   - ssl
                   type: object
                 type: array
+              httpPort:
+                format: int32
+                type: integer
               image:
                 type: string
               replicas:
+                format: int32
                 type: integer
             required:
             - domains
+            - httpPort
             - image
             - replicas
             type: object
@@ -69,6 +87,8 @@ spec:
             properties:
               currentReplicas:
                 type: integer
+              endpoints:
+                type: string
               ready:
                 type: boolean
             type: object

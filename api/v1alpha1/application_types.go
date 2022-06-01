@@ -43,14 +43,17 @@ type ApplicationSpec struct {
 
 // ApplicationStatus defines the observed state of Application
 type ApplicationStatus struct {
-	Ready           bool `json:"ready,omitempty"`
-	CurrentReplicas int  `json:"currentReplicas,omitempty"`
+	Ready           bool   `json:"ready,omitempty"`
+	CurrentReplicas int    `json:"currentReplicas,omitempty"`
+	Endpoints       string `json:"endpoints,omitempty"`
 }
 
 //+kubebuilder:object:root=true
 //+kubebuilder:subresource:status
-
-// Application is the Schema for the applications API
+// +kubebuilder:printcolumn:name="Replicas",type=integer,JSONPath=`.spec.replicas`
+// +kubebuilder:printcolumn:name="Image",type=string,JSONPath=`.spec.image`
+// +kubebuilder:printcolumn:name="Port",type=integer,priority=1,JSONPath=`.spec.httpPort`
+// +kubebuilder:printcolumn:name="Endpoints",type=string,JSONPath=`.status.endpoints`
 type Application struct {
 	metav1.TypeMeta   `json:",inline"`
 	metav1.ObjectMeta `json:"metadata,omitempty"`

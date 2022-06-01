@@ -18,13 +18,16 @@ package controllers
 
 import (
 	"context"
+	"fmt"
 	"github.com/go-logr/logr"
 	v1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 	v12 "k8s.io/api/networking/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/apimachinery/pkg/util/intstr"
 	controllers "sotoon.ir/application/utils"
+	"strings"
 
 	"k8s.io/apimachinery/pkg/runtime"
 	ctrl "sigs.k8s.io/controller-runtime"
@@ -56,29 +59,9 @@ func (r *ApplicationReconciler) getResourceLabels(name string) map[string]string
 	)
 }
 
-func (r *ApplicationReconciler) getContainerAndServicePorts() (*[]corev1.ContainerPort, *[]corev1.ServicePort) {
-	containerPorts := []corev1.ContainerPort{
-		{
-			Name:          HttpPortName,
-			ContainerPort: 3000,
-			Protocol:      corev1.ProtocolTCP,
-		},
-	}
-
-	servicePort := []corev1.ServicePort{
-		{
-			Name:       HttpPortName,
-			Port:       3000,
-			TargetPort: intstr.IntOrString{Type: intstr.String, StrVal: HttpPortName},
-			Protocol:   corev1.ProtocolTCP,
-		},
-	}
-
-	return &containerPorts, &servicePort
-}
-
-func (r *ApplicationReconciler) GetIngress(name string, targetService *corev1.Service, domainSpecs []applicationv1alpha1.ApplicationDomainSpec) *v12.Ingress {
-	labels := r.getResourceLabels(name)
+func (r *ApplicationReconciler) GetIngress(namespaced types.NamespacedName, targetService *corev1.Service, domainSpecs []applicationv1alpha1.ApplicationDomainSpec) *v12.Ingress {
+	labels := r.getResourceLabels(namespaced.Name)
+	pathType := v12.PathTypePrefix
 
 	var rules []v12.IngressRule
 	var tls []v12.IngressTLS
@@ -89,7 +72,8 @@ func (r *ApplicationReconciler) GetIngress(name string, targetService *corev1.Se
 				HTTP: &v12.HTTPIngressRuleValue{
 					Paths: []v12.HTTPIngressPath{
 						{
-							Path: domainSpec.Path,
+							PathType: &pathType,
+							Path:     domainSpec.Path,
 							Backend: v12.IngressBackend{
 								Service: &v12.IngressServiceBackend{
 									Name: targetService.Name,
@@ -111,26 +95,33 @@ func (r *ApplicationReconciler) GetIngress(name string, targetService *corev1.Se
 
 	return &v12.Ingress{
 		ObjectMeta: metav1.ObjectMeta{
-			Labels: labels,
+			Name:      namespaced.Name,
+			Namespace: namespaced.Namespace,
+			Labels:    labels,
 			Annotations: map[string]string{
 				"cert-manager.io/cluster-issuer": "letsencrypt",
-				"kubernetes.io/ingress.class":    "nginx",
 			},
 		},
 		Spec: v12.IngressSpec{
-			IngressClassName: &name,
+			IngressClassName: &namespaced.Name,
 			Rules:            rules,
 			TLS:              tls,
 		},
 	}
 }
 
-func (r *ApplicationReconciler) GetClusterIPService(name string, selector map[string]string, containerPort *corev1.ContainerPort) *corev1.Service {
-	labels := r.getResourceLabels(name)
+func (r *ApplicationReconciler) GetClusterIPService(namespaced types.NamespacedName, selector map[string]string, containerPort *corev1.ContainerPort) *corev1.Service {
+	labels := r.getResourceLabels(namespaced.Name)
 
 	return &corev1.Service{
+		TypeMeta: metav1.TypeMeta{
+			Kind:       "Service",
+			APIVersion: "v1",
+		},
 		ObjectMeta: metav1.ObjectMeta{
-			Labels: labels,
+			Name:      namespaced.Name,
+			Namespace: namespaced.Namespace,
+			Labels:    labels,
 		},
 		Spec: corev1.ServiceSpec{
 			Selector: selector,
@@ -146,10 +137,15 @@ func (r *ApplicationReconciler) GetClusterIPService(name string, selector map[st
 	}
 }
 
-func (r *ApplicationReconciler) GetDeployment(name string, image string, replicas int32, httpPort int32) *v1.Deployment {
-	labels := r.getResourceLabels(name)
+func (r *ApplicationReconciler) GetDeployment(namespaced types.NamespacedName, image string, replicas int32, httpPort int32) *v1.Deployment {
+	labels := r.getResourceLabels(namespaced.Name)
 
 	return &v1.Deployment{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      namespaced.Name,
+			Namespace: namespaced.Namespace,
+			Labels:    labels,
+		},
 		Spec: v1.DeploymentSpec{
 			Replicas: &replicas,
 			Selector: &metav1.LabelSelector{
@@ -215,6 +211,20 @@ func (r *ApplicationReconciler) ReconcileIngress(ingress *v12.Ingress, logger *l
 	return nil
 }
 
+func (r *ApplicationReconciler) UpdateApplicationStatus(application *applicationv1alpha1.Application, logger *logr.Logger, ctx context.Context, req ctrl.Request) error {
+	var applicationEndpoints string
+	for _, domain := range application.Spec.Domains {
+		if domain.SSL.Enabled {
+			applicationEndpoints += fmt.Sprintf("https://%s:%d%s, ", domain.Host, application.Spec.HttpPort, domain.Path)
+		} else {
+			applicationEndpoints += fmt.Sprintf("http://%s:%d%s, ", domain.Host, application.Spec.HttpPort, domain.Path)
+		}
+	}
+	application.Status.Endpoints = strings.TrimSuffix(applicationEndpoints, ", ")
+
+	return r.Status().Update(ctx, application)
+}
+
 //+kubebuilder:rbac:groups=application.sotoon.ir,resources=applications,verbs=get;list;watch;create;update;patch;delete
 //+kubebuilder:rbac:groups=application.sotoon.ir,resources=applications/status,verbs=get;update;patch
 //+kubebuilder:rbac:groups=application.sotoon.ir,resources=applications/finalizers,verbs=update
@@ -227,22 +237,28 @@ func (r *ApplicationReconciler) Reconcile(ctx context.Context, req ctrl.Request)
 		return ctrl.Result{}, client.IgnoreNotFound(err)
 	}
 
-	deployment := r.GetDeployment(application.Name, application.Spec.Image, application.Spec.Replicas, application.Spec.HttpPort)
+	deployment := r.GetDeployment(req.NamespacedName, application.Spec.Image, application.Spec.Replicas, application.Spec.HttpPort)
 	err := r.ReconcileDeployment(deployment, &logger, ctx, req)
 	if err != nil {
 		return ctrl.Result{}, err
 	}
 
 	mainContainerPort := &deployment.Spec.Template.Spec.Containers[0].Ports[0]
-	service := r.GetClusterIPService(application.Name, deployment.Spec.Template.Labels, mainContainerPort)
+	service := r.GetClusterIPService(req.NamespacedName, deployment.Spec.Template.Labels, mainContainerPort)
 	err = r.ReconcileService(service, &logger, ctx, req)
 	if err != nil {
 		return ctrl.Result{}, err
 	}
 
-	ingress := r.GetIngress(application.Name, service, application.Spec.Domains)
+	ingress := r.GetIngress(req.NamespacedName, service, application.Spec.Domains)
 	err = r.ReconcileIngress(ingress, &logger, ctx, req)
 	if err != nil {
+		return ctrl.Result{}, err
+	}
+
+	err = r.UpdateApplicationStatus(&application, &logger, ctx, req)
+	if err != nil {
+		logger.Error(err, "Failed to update application status")
 		return ctrl.Result{}, err
 	}
 
