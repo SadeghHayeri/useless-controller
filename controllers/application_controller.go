@@ -26,6 +26,8 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/apimachinery/pkg/util/intstr"
+	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
+	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 	controllers "sotoon.ir/application/utils"
 	"strings"
 
@@ -222,6 +224,12 @@ func (r *ApplicationReconciler) UpdateApplicationStatus(application *application
 	}
 	application.Status.Endpoints = strings.TrimSuffix(applicationEndpoints, ", ")
 
+	var currentDeployment v1.Deployment
+	if err := r.Get(ctx, req.NamespacedName, &currentDeployment); err == nil {
+		logger.Info("Update application replicas")
+		application.Status.CurrentReplicas = fmt.Sprintf("%d/%d", currentDeployment.Status.AvailableReplicas, currentDeployment.Status.Replicas)
+	}
+
 	return r.Status().Update(ctx, application)
 }
 
@@ -238,6 +246,9 @@ func (r *ApplicationReconciler) Reconcile(ctx context.Context, req ctrl.Request)
 	}
 
 	deployment := r.GetDeployment(req.NamespacedName, application.Spec.Image, application.Spec.Replicas, application.Spec.HttpPort)
+	if err := controllerutil.SetControllerReference(&application, deployment, r.Scheme); err != nil {
+		return reconcile.Result{}, err
+	}
 	err := r.ReconcileDeployment(deployment, &logger, ctx, req)
 	if err != nil {
 		return ctrl.Result{}, err
@@ -245,12 +256,18 @@ func (r *ApplicationReconciler) Reconcile(ctx context.Context, req ctrl.Request)
 
 	mainContainerPort := &deployment.Spec.Template.Spec.Containers[0].Ports[0]
 	service := r.GetClusterIPService(req.NamespacedName, deployment.Spec.Template.Labels, mainContainerPort)
+	if err := controllerutil.SetControllerReference(&application, service, r.Scheme); err != nil {
+		return reconcile.Result{}, err
+	}
 	err = r.ReconcileService(service, &logger, ctx, req)
 	if err != nil {
 		return ctrl.Result{}, err
 	}
 
 	ingress := r.GetIngress(req.NamespacedName, service, application.Spec.Domains)
+	if err := controllerutil.SetControllerReference(&application, ingress, r.Scheme); err != nil {
+		return reconcile.Result{}, err
+	}
 	err = r.ReconcileIngress(ingress, &logger, ctx, req)
 	if err != nil {
 		return ctrl.Result{}, err
@@ -267,7 +284,12 @@ func (r *ApplicationReconciler) Reconcile(ctx context.Context, req ctrl.Request)
 
 // SetupWithManager sets up the controller with the Manager.
 func (r *ApplicationReconciler) SetupWithManager(mgr ctrl.Manager) error {
+	//TODO: Index resources
+
 	return ctrl.NewControllerManagedBy(mgr).
 		For(&applicationv1alpha1.Application{}).
+		Owns(&v1.Deployment{}).
+		Owns(&corev1.Service{}).
+		Owns(&v12.Ingress{}).
 		Complete(r)
 }
