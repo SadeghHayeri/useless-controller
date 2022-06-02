@@ -245,6 +245,7 @@ func (r *ApplicationReconciler) UpdateApplicationStatus(application *application
 //+kubebuilder:rbac:groups=application.sotoon.ir,resources=applications,verbs=get;list;watch;create;update;patch;delete
 //+kubebuilder:rbac:groups=application.sotoon.ir,resources=applications/status,verbs=get;update;patch
 //+kubebuilder:rbac:groups=application.sotoon.ir,resources=applications/finalizers,verbs=update
+//+kubebuilder:rbac:groups=apps,resources=deployments,verbs=get;list;watch;create;update;patch;delete
 func (r *ApplicationReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
 	logger := log.FromContext(ctx)
 
