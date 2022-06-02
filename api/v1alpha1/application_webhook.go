@@ -42,7 +42,11 @@ var _ webhook.Defaulter = &Application{}
 func (r *Application) Default() {
 	applicationlog.Info("default", "name", r.Name)
 
-	// TODO(user): fill in your defaulting logic.
+	if r.Spec.Replicas == nil {
+		applicationlog.Info("(Defaulting) Set application replicas to one")
+		one := int32(1)
+		r.Spec.Replicas = &one
+	}
 }
 
 // TODO(user): change verbs to "verbs=create;update;delete" if you want to enable deletion validation.

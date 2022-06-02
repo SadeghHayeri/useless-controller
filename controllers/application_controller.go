@@ -28,7 +28,6 @@ import (
 	"k8s.io/apimachinery/pkg/util/intstr"
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
-	controllers "sotoon.ir/application/utils"
 	"strings"
 
 	"k8s.io/apimachinery/pkg/runtime"
@@ -41,6 +40,16 @@ import (
 
 var HttpPortName = "http"
 
+func MergeMaps(ms ...map[string]string) map[string]string {
+	res := map[string]string{}
+	for _, m := range ms {
+		for k, v := range m {
+			res[k] = v
+		}
+	}
+	return res
+}
+
 // ApplicationReconciler reconciles a Application object
 type ApplicationReconciler struct {
 	client.Client
@@ -52,7 +61,7 @@ var DefaultControllerLabels = map[string]string{
 }
 
 func (r *ApplicationReconciler) getResourceLabels(name string) map[string]string {
-	return controllers.MergeMaps(
+	return MergeMaps(
 		DefaultControllerLabels,
 		map[string]string{
 			"controller": "applicationController",
@@ -245,7 +254,7 @@ func (r *ApplicationReconciler) Reconcile(ctx context.Context, req ctrl.Request)
 		return ctrl.Result{}, client.IgnoreNotFound(err)
 	}
 
-	deployment := r.GetDeployment(req.NamespacedName, application.Spec.Image, application.Spec.Replicas, application.Spec.HttpPort)
+	deployment := r.GetDeployment(req.NamespacedName, application.Spec.Image, *application.Spec.Replicas, application.Spec.HttpPort)
 	if err := controllerutil.SetControllerReference(&application, deployment, r.Scheme); err != nil {
 		return reconcile.Result{}, err
 	}
@@ -288,8 +297,8 @@ func (r *ApplicationReconciler) SetupWithManager(mgr ctrl.Manager) error {
 
 	return ctrl.NewControllerManagedBy(mgr).
 		For(&applicationv1alpha1.Application{}).
-		Owns(&v1.Deployment{}).
-		Owns(&corev1.Service{}).
-		Owns(&v12.Ingress{}).
+		//Owns(&v1.Deployment{}).
+		//Owns(&corev1.Service{}).
+		//Owns(&v12.Ingress{}).
 		Complete(r)
 }

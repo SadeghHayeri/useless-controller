@@ -35,7 +35,7 @@ type ApplicationDomainSpec struct {
 
 // ApplicationSpec defines the desired state of Application
 type ApplicationSpec struct {
-	Replicas int32                   `json:"replicas"`
+	Replicas *int32                  `json:"replicas"`
 	Image    string                  `json:"image"`
 	HttpPort int32                   `json:"httpPort"`
 	Domains  []ApplicationDomainSpec `json:"domains"`
