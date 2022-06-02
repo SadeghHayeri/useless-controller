@@ -17,7 +17,10 @@ limitations under the License.
 package v1alpha1
 
 import (
+	"k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/runtime/schema"
+	"k8s.io/apimachinery/pkg/util/validation/field"
 	ctrl "sigs.k8s.io/controller-runtime"
 	logf "sigs.k8s.io/controller-runtime/pkg/log"
 	"sigs.k8s.io/controller-runtime/pkg/webhook"
@@ -54,20 +57,53 @@ func (r *Application) Default() {
 
 var _ webhook.Validator = &Application{}
 
+func (r *Application) ValidateReplicas() *field.Error {
+	if *r.Spec.Replicas > 5 {
+		return field.Invalid(field.NewPath("spec", "replicas"), *r.Spec.Replicas, "replicas must be less than 5")
+	}
+	return nil
+}
+
+func (r *Application) ValidateCreateOrUpdate() field.ErrorList {
+	var allErrs field.ErrorList
+
+	if err := r.ValidateReplicas(); err != nil {
+		allErrs = append(allErrs, err)
+	}
+
+	return allErrs
+}
+
 // ValidateCreate implements webhook.Validator so a webhook will be registered for the type
 func (r *Application) ValidateCreate() error {
 	applicationlog.Info("validate create", "name", r.Name)
+	var allErrs field.ErrorList
+	for _, err := range r.ValidateCreateOrUpdate() {
+		allErrs = append(allErrs, err)
+	}
 
-	// TODO(user): fill in your validation logic upon object creation.
-	return nil
+	//TODO: Create validation here
+
+	if len(allErrs) == 0 {
+		return nil
+	}
+	return errors.NewInvalid(schema.GroupKind{Group: "application.sotoon.ir", Kind: "Application"}, r.Name, allErrs)
 }
 
 // ValidateUpdate implements webhook.Validator so a webhook will be registered for the type
 func (r *Application) ValidateUpdate(old runtime.Object) error {
 	applicationlog.Info("validate update", "name", r.Name)
+	var allErrs field.ErrorList
+	for _, err := range r.ValidateCreateOrUpdate() {
+		allErrs = append(allErrs, err)
+	}
 
-	// TODO(user): fill in your validation logic upon object update.
-	return nil
+	//TODO: Update validation here
+
+	if len(allErrs) == 0 {
+		return nil
+	}
+	return errors.NewInvalid(schema.GroupKind{Group: "application.sotoon.ir", Kind: "Application"}, r.Name, allErrs)
 }
 
 // ValidateDelete implements webhook.Validator so a webhook will be registered for the type
