@@ -4,7 +4,6 @@ metadata:
   name: nginx
 spec:
   image: nginx:latest
-  replicas: 3
   httpPort: 80
   domains:
     - host: nginx.local
